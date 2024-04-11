@@ -116,17 +116,23 @@ class Trader:
         self.position[prod] = statePos.get(prod, 0)
         alrBought = 0
         alrSold = 0
-        best_ask = 0
-        best_bid = 0
+        best_ask = 10000
+        best_bid = 10000
         if len(order_depth[prod].sell_orders) != 0:
             sells = list(order_depth[prod].sell_orders.items())
             best_ask = sells[0][0]
             for ask, ask_amount in sells:
                 if int(ask) < 10000:
-                    alrBought += ask_amount
-                    orders['AMETHYSTS'].append(Order(prod, ask, -ask_amount))
+                    if self.position[prod] + alrBought - ask_amount <= 20:
+                        alrBought -= ask_amount
+                        orders['AMETHYSTS'].append(Order(prod, ask, -ask_amount))
+                    else:
+                        num = max(20 - self.position[prod] - alrBought, 0)
+                        orders['AMETHYSTS'].append(Order(prod, ask, num))
+                        alrBought += num
+                        logger.print("num: " + str(num))
                 if int(ask) == 10000 and self.position[prod] + alrBought < 0:
-                    alrBought += ask_amount
+                    alrBought -= ask_amount
                     orders['AMETHYSTS'].append(Order(prod, ask, -ask_amount))
 
         if len(order_depth[prod].buy_orders) != 0:
@@ -134,8 +140,14 @@ class Trader:
             best_bid = buys[0][0]
             for bid, bid_amount in buys:
                 if int(bid) > 10000:
-                    alrSold += bid_amount
-                    orders['AMETHYSTS'].append(Order(prod, bid, -bid_amount))
+                    if self.position[prod] - alrSold - bid_amount >= -20:
+                        alrSold += bid_amount
+                        orders['AMETHYSTS'].append(Order(prod, bid, -bid_amount))
+                    else:
+                        num = min(-20 - self.position[prod] + alrSold, 0)
+                        orders['AMETHYSTS'].append(Order(prod, bid, num))
+                        alrSold -= num
+                        logger.print("num: " + str(num))
                 if int(ask) == 10000 and self.position[prod] - alrSold > 0:
                     alrSold += bid_amount
                     orders['AMETHYSTS'].append(Order(prod, bid, -bid_amount))
@@ -145,7 +157,8 @@ class Trader:
         logger.print("AlrBought: " + str(alrBought))
 
         orders['AMETHYSTS'].append(Order(prod, max(10003, best_ask - 1), min(0, -(self.position[prod] + self.max_position[prod] - alrSold))))
-        orders['AMETHYSTS'].append(Order(prod, min(9997, best_bid + 1), max(0, self.max_position[prod] - self.position[prod] + alrBought)))
+        orders['AMETHYSTS'].append(Order(prod, min(9997, best_bid + 1), max(0, self.max_position[prod] - self.position[prod] - alrBought)))
+
     
         return orders['AMETHYSTS']
     def run(self, state: TradingState) -> tuple[dict[Symbol, list[Order]], int, str]:
