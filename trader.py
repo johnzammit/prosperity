@@ -220,17 +220,16 @@ class Trader:
                         bt_bid_flow, bt_ask_flow, bt_order_flow_imbalance):
         
         coef_bt_rip_indicator = 0.0
-        coef_bt_x_vol = 1.2393382185941624e-05
-        coef_bt_vol_ratio = 1.7510197185065842e-05
-        coef_bt_spread = 0.010746712418221607
-        coef_bt_orderbook_imbalance = -0.00017974085965982107
-        coef_bt_orderbook_imbalance_ratio = -4.361872758752063e-06
-        coef_bt_bid_flow = -78381908.27485323
-        coef_bt_ask_flow = 78381908.27485229
-        coef_bt_order_flow_imbalance = 78381908.27485344
+        coef_bt_x_vol = 4.89008080763977e-06
+        coef_bt_vol_ratio = -2.2118079128011307e-05
+        coef_bt_spread = -0.010618497206975165
+        coef_bt_orderbook_imbalance = -0.00017908933715135944
+        coef_bt_orderbook_imbalance_ratio = -4.2088488899182685e-06
+        coef_bt_bid_flow = -17390114.840427157
+        coef_bt_ask_flow = 17390114.840426963
+        coef_bt_order_flow_imbalance = 17390114.840427898
 
-        
-        intercept = -1.2519778872005928e-05
+        intercept = 4.231355905265511e-05
 
         prediction = (coef_bt_rip_indicator * bt_rip_indicator +
                     coef_bt_x_vol * bt_x_vol +
@@ -278,13 +277,13 @@ class Trader:
         features = [rip_ind, x_volatility, vol_ratio_, spread, normalized_imbalance, max_ratio, bid_flow, ask_flow, order_flow_imbalance]
 
         returns = self.predict_returns(*features)
-        #if returns > 0 and  > (ask- mid_price) / mid_price, then we would buy and sell if returns < (bid - mid_price)/ mid_price
-        if returns > 0 and returns > (best_ask - mid_price) / mid_price:
+        # mid_price * (1+expected_ret) >  best ask, buy or mid * (1+expected_ret) < best_bid, sell.
+        if returns > 0 and mid_price * (1+returns) > best_ask:
             if self.position[prod] < 20:
                 max_buy = min(20 - self.position[prod], bid_vol)
                 orders['STARFRUIT'].append(Order('STARFRUIT', best_ask, min(int(max_buy/2), ask_vol)))
                 alrBought += max_buy
-        elif returns < (best_bid - mid_price) / mid_price:
+        elif returns < 0 and mid_price * (1+returns) < best_bid:
             if self.position[prod] < 20:
                 max_sell = min(20 - self.position[prod], ask_vol)
                 orders['STARFRUIT'].append(Order('STARFRUIT', best_bid, min(int(max_sell/2), bid_vol)))
