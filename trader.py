@@ -1,6 +1,7 @@
 import json
 from datamodel import Listing, Observation, Order, OrderDepth, ProsperityEncoder, Symbol, Trade, TradingState
 from typing import Any, List
+import numpy as np
 
 class Logger:
     def __init__(self) -> None:
@@ -161,6 +162,137 @@ class Trader:
 
     
         return orders['AMETHYSTS']
+    #################################################
+    def spread_ (self, order_depth):
+        best_bid = max(order_depth.buy_orders.keys(), default=0)
+        best_ask = min(order_depth.sell_orders.keys(), default=0)
+        mid_price = (best_ask + best_bid) / 2
+        spread = (best_ask - best_bid) / mid_price
+        return spread, mid_price
+
+
+    # Orderbook imbalance: MAX ASK DEPTH - MAX BID DEPTH, or normalized version:  (MAX_ASK_DEPTH - MAX_BID_DEPTH)/TOTAL_ORDERBOOK_DEPTH  and MAX_ASK_DEPTH/MAX_BID_DEPTH. 
+    def orderbook_imbalance (self, order_depth):
+        max_ask_depth = len(order_depth.sell_orders.values())
+        max_bid_depth = len(order_depth.buy_orders.values())
+        total_depth = abs(max_ask_depth) + abs(max_bid_depth)
+
+        if total_depth == 0:
+            normalized_imbalance = 0
+        else:
+            normalized_imbalance = (max_ask_depth - max_bid_depth) / total_depth
+
+        max_ratio = max_ask_depth / max_bid_depth if max_bid_depth != 0 else float('inf')
+
+        return normalized_imbalance, max_ratio
+
+    # RIP_INDICATOR: 1 if return on price in last x timestamps is >=y%, and 0 otherwise. (need to pick x and y). 
+    def rip_indicator (self, trades, x, y):
+        if len(trades) < x:
+            return 0 
+        returns = trades.pct_change(periods=5)
+        
+        return 1 if returns >= y else 0
+
+    # X_VOL: (normalized) volatility (aka standard deviation) of stock in last x timestamps (need to pick x). 
+    def x_vol (self, trades, x):
+        if len(trades) < x:
+            return 0
+        latest_trades = trades[-x:]
+        return np.std(latest_trades)
+
+    # VOL_RATIO: (MAX_VOL_LAST_x_TIMESTAMPS - MIN_VOL_LAST_x_TIMESTAMPS)/AVG_VOL_LAST_x_TIMESTAMPS, (need to pick/refine x). 
+    def vol_ratio (self, trades, x):
+        if len(trades) < x:
+            return 0 
+        latest_trades = trades[-x:]
+        volatilities = [np.std(latest_trades[max(0, i-10):i+1]) for i in range(len(latest_trades))]
+
+        max_vol = max(volatilities)
+        min_vol = min(volatilities)
+        avg_vol = np.mean(volatilities)
+
+        return (max_vol - min_vol) / avg_vol if avg_vol != 0 else float('inf')
+
+
+    def predict_returns(self, bt_rip_indicator, bt_x_vol, bt_vol_ratio, bt_spread, 
+                        bt_orderbook_imbalance, bt_orderbook_imbalance_ratio, 
+                        bt_bid_flow, bt_ask_flow, bt_order_flow_imbalance):
+        
+        coef_bt_rip_indicator = 0.0
+        coef_bt_x_vol = 1.2393382185941624e-05
+        coef_bt_vol_ratio = 1.7510197185065842e-05
+        coef_bt_spread = 0.010746712418221607
+        coef_bt_orderbook_imbalance = -0.00017974085965982107
+        coef_bt_orderbook_imbalance_ratio = -4.361872758752063e-06
+        coef_bt_bid_flow = -78381908.27485323
+        coef_bt_ask_flow = 78381908.27485229
+        coef_bt_order_flow_imbalance = 78381908.27485344
+
+        
+        intercept = -1.2519778872005928e-05
+
+        prediction = (coef_bt_rip_indicator * bt_rip_indicator +
+                    coef_bt_x_vol * bt_x_vol +
+                    coef_bt_vol_ratio * bt_vol_ratio +
+                    coef_bt_spread * bt_spread +
+                    coef_bt_orderbook_imbalance * bt_orderbook_imbalance +
+                    coef_bt_orderbook_imbalance_ratio * bt_orderbook_imbalance_ratio +
+                    coef_bt_bid_flow * bt_bid_flow +
+                    coef_bt_ask_flow * bt_ask_flow +
+                    coef_bt_order_flow_imbalance * bt_order_flow_imbalance +
+                    intercept)
+
+        return prediction
+
+    def starfruit(self, order_depth, statePos, prev_bid_ask_vol, prev_mid_price):
+        orders = {'STARFRUIT' : []}
+        prod = "STARFRUIT"
+        self.position[prod] = statePos.get(prod, 0)
+        alrBought = 0
+        alrSold = 0
+        best_ask = 0
+        ask_vol = 0
+        best_bid = 0
+        bid_vol = 0
+        if len(order_depth[prod].sell_orders) != 0:
+            sells = list(order_depth[prod].sell_orders.items())
+            best_ask = sells[0][0]
+            ask_vol = sells[0][1]
+
+        if len(order_depth[prod].buy_orders) != 0:
+            buys = list(order_depth[prod].buy_orders.items())
+            best_bid = buys[0][0]
+            bid_vol = buys[0][1]
+
+        mid_price = (best_ask + best_bid) / 2
+        spread = (best_ask - best_bid) / mid_price
+        normalized_imbalance, max_ratio = self.orderbook_imbalance(order_depth[prod])
+        rip_ind = self.rip_indicator(prev_mid_price, 5, 0.05)
+        x_volatility = self.x_vol(prev_mid_price, 10)
+        vol_ratio_ = self.vol_ratio(prev_mid_price, 10)
+        b, a = prev_bid_ask_vol[-1] if prev_bid_ask_vol else (0, 0)
+        bid_flow = best_bid - b
+        ask_flow = best_ask - a
+        order_flow_imbalance = bid_flow - ask_flow
+        features = [rip_ind, x_volatility, vol_ratio_, spread, normalized_imbalance, max_ratio, bid_flow, ask_flow, order_flow_imbalance]
+
+        returns = self.predict_returns(*features)
+        #if returns > 0 and  > (ask- mid_price) / mid_price, then we would buy and sell if returns < (bid - mid_price)/ mid_price
+        if returns > 0 and returns > (best_ask - mid_price) / mid_price:
+            if self.position[prod] < 20:
+                max_buy = min(20 - self.position[prod], bid_vol)
+                orders['STARFRUIT'].append(Order('STARFRUIT', best_ask, min(int(max_buy/2), ask_vol)))
+                alrBought += max_buy
+        elif returns < (best_bid - mid_price) / mid_price:
+            if self.position[prod] < 20:
+                max_sell = min(20 - self.position[prod], ask_vol)
+                orders['STARFRUIT'].append(Order('STARFRUIT', best_bid, min(int(max_sell/2), bid_vol)))
+                alrSold += max_sell
+                
+        prev_bid_ask_vol.append((bid_vol, ask_vol))
+        prev_mid_price.append(mid_price)
+        return orders['STARFRUIT']
     def run(self, state: TradingState) -> tuple[dict[Symbol, list[Order]], int, str]:
 
         result = {'AMETHYSTS': [], 'STARFRUIT': []}
@@ -168,7 +300,11 @@ class Trader:
         trader_data = ""
 
         # TODO: Add logic
+        prev_bid_ask_vol = []
+        prev_mid_price = []
         amethystOrders = self.amethysts(state.order_depths, state.position)
+        starfruitOrders = self.starfruit(state.order_depths, state.position, prev_bid_ask_vol, prev_mid_price)
+        result['STARFRUIT'] = starfruitOrders
         result['AMETHYSTS'] = amethystOrders
 
         logger.flush(state, result, conversions, trader_data)
