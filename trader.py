@@ -183,18 +183,17 @@ class Trader:
         
         return coef_returns_1*r1+coef_returns_2*r2+coef_returns_3*r3+coef_returns_4*r4+coef_returns_5*r5 +coef_std*std+ intercept
         
-        coef_bt_rip_indicator = 0.0
-        coef_bt_x_vol = 1.2393382185941624e-05
-        coef_bt_vol_ratio = 1.7510197185065842e-05
-        coef_bt_spread = 0.010746712418221607
-        coef_bt_orderbook_imbalance = -0.00017974085965982107
-        coef_bt_orderbook_imbalance_ratio = -4.361872758752063e-06
-        coef_bt_bid_flow = -78381908.27485323
-        coef_bt_ask_flow = 78381908.27485229
-        coef_bt_order_flow_imbalance = 78381908.27485344
 
-        
-        intercept = -1.2519778872005928e-05
+#         coef_m1=  0.39326134154061504
+#         coef_m2=  0.3195257554864681
+#         coef_m3=  0.2866245722765353
+#         intercept=  2.9548692564912926
+
+#         prediction = (
+#                     coef_m1 * m1 + 
+#             coef_m2 * m2 + 
+#             coef_m3 * m3 + 
+#             intercept)
 
 #         return prediction
 
@@ -243,20 +242,53 @@ class Trader:
         features = [prev_mid_price[-1], prev_mid_price[-2], prev_mid_price[-3], 
                     prev_mid_price[-4],prev_mid_price[-5], prev_mid_price[-6]]
         returns = self.predict_returns(*features)
-        #if returns > 0 and  > (ask- mid_price) / mid_price, then we would buy and sell if returns < (bid - mid_price)/ mid_price
-        if returns > 0 and returns > (best_ask - mid_price) / mid_price:
-            if self.position[prod] < 20:
-                max_buy = min(20 - self.position[prod], bid_vol)
-                orders['STARFRUIT'].append(Order('STARFRUIT', best_ask, min(int(max_buy/2), ask_vol)))
-                alrBought += max_buy
-        elif returns < (best_bid - mid_price) / mid_price:
-            if self.position[prod] < 20:
-                max_sell = min(20 - self.position[prod], ask_vol)
-                orders['STARFRUIT'].append(Order('STARFRUIT', best_bid, min(int(max_sell/2), bid_vol)))
-                alrSold += max_sell
-                
-        prev_bid_ask_vol.append((bid_vol, ask_vol))
-        prev_mid_price.append(mid_price)
+        returns =  round((1+returns) * prev_mid_price[-1])
+        logger.print(returns)
+
+        alrBought = 0
+        alrSold = 0
+        best_ask = returns
+        best_bid = returns
+        if len(order_depth[prod].sell_orders) != 0:
+            sells = list(order_depth[prod].sell_orders.items())
+            best_ask = sells[0][0]
+            for ask, ask_amount in sells:
+                if int(ask) < returns:
+                    if self.position[prod] + alrBought - ask_amount <= 20:
+                        alrBought -= ask_amount
+                        orders['STARFRUIT'].append(Order(prod, ask, -ask_amount))
+                    else:
+                        num = np.ceil(max(20 - self.position[prod] - alrBought, 0))
+                        orders['STARFRUIT'].append(Order(prod, ask, num))
+                        alrBought += num
+                        logger.print("num: " + str(num))
+                if int(ask) == returns and self.position[prod] + alrBought < 0:
+                    alrBought -= ask_amount
+                    orders['STARFRUIT'].append(Order(prod, ask, -ask_amount))
+
+        if len(order_depth[prod].buy_orders) != 0:
+            buys = list(order_depth[prod].buy_orders.items())
+            best_bid = buys[0][0]
+            for bid, bid_amount in buys:
+                if int(bid) > returns:
+                    if self.position[prod] - alrSold - bid_amount >= -20:
+                        alrSold += bid_amount
+                        orders['STARFRUIT'].append(Order(prod, bid, -bid_amount))
+                    else:
+                        num = np.ceil(min(-20 - self.position[prod] + alrSold, 0))
+                        orders['STARFRUIT'].append(Order(prod, bid, num))
+                        alrSold -= num
+                        logger.print("num: " + str(num))
+                if int(ask) == returns and self.position[prod] - alrSold > 0:
+                    alrSold += bid_amount
+                    orders['STARFRUIT'].append(Order(prod, bid, -bid_amount))
+
+        self.prev_mid_price.append(mid_price)
+        self.prev_ask_vol.append(-1*ask_vol)
+        self.prev_bid_vol.append(bid_vol)
+        
+        orders['STARFRUIT'].append(Order(prod, max(returns + 2, best_ask - 1), min(0, -(self.position[prod] + self.max_position[prod] - alrSold))))
+        orders['STARFRUIT'].append(Order(prod, min(returns - 2, best_bid + 1), max(0, self.max_position[prod] - self.position[prod] - alrBought)))
         return orders['STARFRUIT']
     
     def __init__(self):
