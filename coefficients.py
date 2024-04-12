@@ -23,7 +23,7 @@ price_data.columns = [col.strip() for col in price_data.columns]
 #remove first three rows
 price_data = price_data.drop(price_data.index[1:4])
 
-price_data['future_price'] = price_data['mid_price'].shift(-1)
+price_data['future_price'] = price_data['mid_price']
 price_data['returns'] = price_data['future_price']
 price_data.dropna(subset=['returns'], inplace=True)
 
